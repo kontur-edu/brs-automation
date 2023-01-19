@@ -23,22 +23,17 @@ namespace tech_cards_creator
 
         static async Task Main()
         {
-            using var pw = await Playwright.CreateAsync();
-            await using var browser = await pw.Chromium.LaunchAsync(new BrowserTypeLaunchOptions()
-            {
-                Headless = false,
-                Timeout = 60000
-            });
-
-            var context = await browser.NewContextAsync();
+            var context = await CreateBrowserContext();
             var page = await context.NewPageAsync();
             await page.GotoAsync("https://brs.urfu.ru/mrd/mvc/mobile#/");
-            await AddAuthCookie(context);
+            await AddAuthCookie(context); // можно добавить куки, только когда мы уже открыли какую-то страницу в нужном домене.
             var techCards = await GetDisciplineTechCardsViaApi(2022, 1, 3, false);
             foreach (var techCard in techCards)
             {
+                // Вот этот if надо править, если хочется делать техкарты для чего-то другого:
                 if (!techCard.CourseName.StartsWith("Специальный курс") || techCard.Agreed)
                     continue;
+                
                 Console.WriteLine("Create tech card for course: " + techCard);
                 await page.GotoAsync($"https://brs.urfu.ru/mrd/mvc/mobile/view/technologyCard/{techCard.Id}/intermediate#/");
                 await SelectExamLoadType(page);
@@ -87,9 +82,23 @@ namespace tech_cards_creator
                 }
                 else
                 {
+                    // Это если у нас нет прав на согласование техкарт
                     Console.WriteLine("Готова к согласованию");
                 }
             }
+        }
+
+        private static async Task<IBrowserContext> CreateBrowserContext()
+        {
+            using var pw = await Playwright.CreateAsync();
+            await using var browser = await pw.Chromium.LaunchAsync(new BrowserTypeLaunchOptions()
+            {
+                Headless = false,
+                Timeout = 60000
+            });
+
+            var context = await browser.NewContextAsync();
+            return context;
         }
 
         private static async Task AddAuthCookie(IBrowserContext context)
