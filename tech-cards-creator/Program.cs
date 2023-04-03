@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Globalization;
+using System.IO;
 using System.Net;
 using Microsoft.Playwright;
 using Newtonsoft.Json;
@@ -8,90 +9,103 @@ using Cookie = Microsoft.Playwright.Cookie;
 
 namespace tech_cards_creator
 {
-    internal class Program
+    public class Program
     {
-        public const int Year  = 2022;
-        public const int YearPart = 1;
-        public const int CourseYear = 3;
-        
         // Нужно залогиниться вручную в браузере и скопировать из DevTools - Application - Cookie JSESSIONID:
-        public const string JsessionidCookie = "A3D0E4A5EEF73CA4A7A0DB2910FFA49A";
+        public const string JsessionidCookie = "BF69EC5F397ADC24AE4E93BF7AE9EAFF";
 
         // На будущее: вероятно лучше полностью перейти на использование API.
         // Потому что фронт нечеловечески неудобен для его обхода через любые средства автоматизации браузеров :(
         // См, как реализовано получение всех дисциплин GetDisciplineTechCardsViaApi
 
-        static async Task Main()
+        static async Task Main2()
         {
+            using var client = CreateHttpClient();
+            var res = await client.GetStringAsync($"https://brs.urfu.ru/mrd/mvc/mobile/discipline/fetch?year={2022}&termType={1}&course={3}&total=43&page=1&pageSize=300&search=%D0%A1%D0%BF%D0%B5%D1%86%D0%B8%D0%B0%D0%BB%D1%8C%D0%BD%D1%8B%D0%B9");
+            var ans = JsonConvert.DeserializeObject<JObject>(res);
+            var disciplines = (JArray)ans["content"];
+            foreach (var discipline in disciplines)
+            {
+                discipline["group"] = discipline["group"].ToString().Replace(" ", "");
+            }
+        }
+
+        public static async Task Main()
+        {
+            var techCards = await GetDisciplineTechCardsViaApi(2022, 2, 3, false);
             var context = await CreateBrowserContext();
             var page = await context.NewPageAsync();
             await page.GotoAsync("https://brs.urfu.ru/mrd/mvc/mobile#/");
             await AddAuthCookie(context); // можно добавить куки, только когда мы уже открыли какую-то страницу в нужном домене.
-            var techCards = await GetDisciplineTechCardsViaApi(2022, 1, 3, false);
             foreach (var techCard in techCards)
             {
                 // Вот этот if надо править, если хочется делать техкарты для чего-то другого:
-                if (!techCard.CourseName.StartsWith("Специальный курс") || techCard.Agreed)
+                if (techCard.Discipline.StartsWith("Специальный курс") || techCard.Agreed)
                     continue;
-                
+
                 Console.WriteLine("Create tech card for course: " + techCard);
-                await page.GotoAsync($"https://brs.urfu.ru/mrd/mvc/mobile/view/technologyCard/{techCard.Id}/intermediate#/");
-                await SelectExamLoadType(page);
-                await NextButtonClick(page);
-                var buttons = page.Locator("#buttonpractice,#buttonlecture,#buttonlaboratory");
-                var (loadTypeCount, lectureIndex) = await GetLectureLoadIndex(buttons);
-                await buttons.Nth(0).ClickAsync();
-                await page.WaitForNavigationAsync();
-                for (var i = 0; i < loadTypeCount; i++)
-                {
-                    await FillLoadType(page);
-                    if (i < loadTypeCount - 1) 
-                        await OpenLoadTypeSettings(page, i+1);
-                }
+                await CreateTechCard(techCard, page);
+            }
+        }
 
-                await NextButtonClick(page);
-                var inputFactors = page.Locator(".input-factor");
-                var inputFactorsCount = await inputFactors.CountAsync();
-                var iFactor = 0;
-                // Заполняем таблицу по три числа в строке, по строке на каждую loadType
-                while (iFactor < inputFactorsCount)
-                {
-                    if (iFactor / 3 == lectureIndex)
-                        await SetFactors(inputFactors, iFactor, 0.5, 0.5, 1.0 / loadTypeCount);
-                    else
-                        await SetFactors(inputFactors, iFactor, 1, 0, 1.0 / loadTypeCount);
-                    iFactor += 3;
-                }
-                
-                Thread.Sleep(1000);  // Появляются всякие крутилки, которые если быстро кликать зависают.
-                buttons = page.GetByText("Далее");
-                await buttons.ClickAsync(); // этот клик не срабатывает как клик, а только как потеря фокуса у редактирования.
-                await buttons.ClickAsync(); // поэтому есть второй Click
-                
-                // Тут должна быть плашка "Ошибок не обнаружено"
-                
-                Thread.Sleep(1000);  // Появляются всякие крутилки, которые если быстро кликать зависают.
-                buttons = page.GetByText("Согласовать тех. карту");
-                if (await buttons.CountAsync() > 0)
-                {
-                    await buttons.First.ClickAsync();
+        private static async Task CreateTechCard(TechCardItem techCard, IPage page)
+        {
+            await page.GotoAsync($"https://brs.urfu.ru/mrd/mvc/mobile/view/technologyCard/{techCard.Id}/intermediate#/");
+            await SelectExamLoadType(page);
+            await NextButtonClick(page);
+            var buttons = page.Locator("#buttonpractice,#buttonlecture,#buttonlaboratory");
+            var (loadTypeCount, lectureIndex) = await GetLectureLoadIndex(buttons);
+            await buttons.Nth(0).ClickAsync();
+            await page.WaitForNavigationAsync();
+            for (var i = 0; i < loadTypeCount; i++)
+            {
+                await FillLoadType(page);
+                if (i < loadTypeCount - 1)
+                    await OpenLoadTypeSettings(page, i + 1);
+            }
 
-                    // Это нужно, чтобы упасть, если не согласовалась ↓
-                    await page.GetByText("Тех. карта успешно согласована.").FocusAsync();
-                    Console.WriteLine("СОГЛАСОВАЛИ!");
-                }
+            await NextButtonClick(page);
+            var inputFactors = page.Locator(".input-factor");
+            var inputFactorsCount = await inputFactors.CountAsync();
+            var iFactor = 0;
+            // Заполняем таблицу по три числа в строке, по строке на каждую loadType
+            while (iFactor < inputFactorsCount)
+            {
+                if (iFactor / 3 == lectureIndex)
+                    await SetFactors(inputFactors, iFactor, 0.5, 0.5, 1.0 / loadTypeCount);
                 else
-                {
-                    // Это если у нас нет прав на согласование техкарт
-                    Console.WriteLine("Готова к согласованию");
-                }
+                    await SetFactors(inputFactors, iFactor, 1, 0, 1.0 / loadTypeCount);
+                iFactor += 3;
+            }
+
+            Thread.Sleep(1000); // Появляются всякие крутилки, которые если быстро кликать зависают.
+            buttons = page.GetByText("Далее");
+            await buttons.ClickAsync(); // этот клик не срабатывает как клик, а только как потеря фокуса у редактирования.
+            await buttons.ClickAsync(); // поэтому есть второй Click
+
+            // Тут должна быть плашка "Ошибок не обнаружено"
+
+            Thread.Sleep(1000); // Появляются всякие крутилки, которые если быстро кликать зависают.
+            buttons = page.GetByText("Согласовать тех. карту");
+            if (await buttons.CountAsync() > 0)
+            {
+                await buttons.First.ClickAsync();
+
+                // Это нужно, чтобы упасть, если не согласовалась ↓
+                await page.GetByText("Тех. карта успешно согласована.").FocusAsync();
+                Console.WriteLine("СОГЛАСОВАЛИ!");
+            }
+            else
+            {
+                // Это если у нас нет прав на согласование техкарт
+                Console.WriteLine("Готова к согласованию");
             }
         }
 
         private static async Task<IBrowserContext> CreateBrowserContext()
         {
-            using var pw = await Playwright.CreateAsync();
-            await using var browser = await pw.Chromium.LaunchAsync(new BrowserTypeLaunchOptions()
+            var pw = await Playwright.CreateAsync();
+            var browser = await pw.Chromium.LaunchAsync(new BrowserTypeLaunchOptions()
             {
                 Headless = false,
                 Timeout = 60000
@@ -150,14 +164,41 @@ namespace tech_cards_creator
                 var response = JsonConvert.DeserializeObject<JObject>(res);
                 disciplinesArray = (JArray)response?["content"]!;
             }
-            var disciplines = disciplinesArray
-                .Select(obj => new TechCardItem(
-                    obj["discipline"]!.Value<string>()!,
-                    obj["disciplineLoad"]!.Value<string>()!,
-                    obj["agreed"]!.Value<bool>()!
-                    ));
-            return disciplines.ToList();
 
+            try
+            {
+                var disciplines = disciplinesArray
+                    .Select(obj => new TechCardItem(
+                        obj["discipline"]!.Value<string>()!,
+                        obj["disciplineLoad"]!.Value<string>()!,
+                        obj["agreed"]!.Value<string?>()?.ToLower() == "true" // эта дич, потому что в agreed иногда бывает null
+                    ));
+                return disciplines.ToList();
+            }
+            catch
+            {
+                Console.WriteLine(res);
+                throw;
+                throw;
+            }
+
+        }
+
+        private static HttpClient CreateHttpClient()
+        {
+            var cookieContainer = new CookieContainer();
+            cookieContainer.Add(new System.Net.Cookie
+            {
+                Name = "JSESSIONID",
+                Value = JsessionidCookie,
+                Domain = "brs.urfu.ru",
+                Path = "/mrd"
+            });
+            var client = new HttpClient(new HttpClientHandler()
+            {
+                CookieContainer = cookieContainer
+            });
+            return client;
         }
 
         private static async Task SelectExamLoadType(IPage page)
@@ -259,6 +300,4 @@ namespace tech_cards_creator
             await editBox.TypeAsync(value);
         }
     }
-
-    internal record TechCardItem(string CourseName, string Id, bool Agreed);
 }
