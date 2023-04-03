@@ -12,7 +12,7 @@ namespace tech_cards_creator
     public class Program
     {
         // Нужно залогиниться вручную в браузере и скопировать из DevTools - Application - Cookie JSESSIONID:
-        public const string JsessionidCookie = "BF69EC5F397ADC24AE4E93BF7AE9EAFF";
+        public const string JsessionidCookie = "";
 
         // На будущее: вероятно лучше полностью перейти на использование API.
         // Потому что фронт нечеловечески неудобен для его обхода через любые средства автоматизации браузеров :(
@@ -32,7 +32,7 @@ namespace tech_cards_creator
 
         public static async Task Main()
         {
-            var techCards = await GetDisciplineTechCardsViaApi(2022, 2, 3, false);
+            var techCards = await GetDisciplineTechCardsViaApi(2022, 2, 2, false);
             var context = await CreateBrowserContext();
             var page = await context.NewPageAsync();
             await page.GotoAsync("https://brs.urfu.ru/mrd/mvc/mobile#/");
@@ -212,7 +212,24 @@ namespace tech_cards_creator
             await element.First.ClickAsync();
 
             var lectures = page.Locator(".km-popup").GetByText("лекции");
-            await lectures.ClickAsync();
+            var practics = page.Locator(".km-popup").GetByText("практические занятия");
+            var labs = page.Locator(".km-popup").GetByText("лабораторные занятия");
+            if (await lectures.CountAsync() > 0)
+            {
+                await lectures.ClickAsync();
+            }
+            else if (await practics.CountAsync() > 0)
+            {
+                await practics.ClickAsync();
+            }
+            else if (await labs.CountAsync() > 0)
+            {
+                await labs.ClickAsync();
+            }
+            else
+            {
+                throw new InvalidOperationException("Alarm!");
+            }
         }
 
         private static async Task OpenNotConfirmedCourse(IPage page, int index)
